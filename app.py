@@ -4,17 +4,22 @@ import os
 import streamlit.components.v1 as components
 from fpdf import FPDF
 
-# --- ตั้งค่าหน้าจอ ---
-st.set_page_config(page_title="AI Timetable Final", layout="wide")
+# --- Configuration ---
+st.set_page_config(page_title="AI Timetable with Time Slots", layout="wide")
 
 THAI_DAYS = {'Mon': 'จันทร์', 'Tue': 'อังคาร', 'Wed': 'พุธ', 'Thu': 'พฤหัสบดี', 'Fri': 'ศุกร์'}
+# กำหนดช่วงเวลา 12 คาบ
+TIME_SLOTS = [
+    "08.00-09.00", "09.00-10.00", "10.00-11.00", "11.00-12.00",
+    "12.00-13.00", "13.00-14.00", "14.00-15.00", "15.00-16.00",
+    "16.00-17.00", "17.00-18.00", "18.00-19.00", "19.00-20.00"
+]
 
-# --- 1. ฟังก์ชันสร้าง PDF (แก้ไขปัญหา Bytearray) ---
+# --- 1. ฟังก์ชันสร้าง PDF พร้อมช่วงเวลา ---
 def generate_pdf_bytes(df_filtered, title_val):
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     
-    # ตั้งค่าฟอนต์
     font_name = "Arial"
     font_path = "THSarabunNew.ttf"
     if os.path.exists(font_path):
@@ -23,26 +28,34 @@ def generate_pdf_bytes(df_filtered, title_val):
     
     pdf.set_font(font_name, '', 16)
     pdf.cell(0, 10, f'Timetable Report: {title_val}', ln=True, align='C')
-    pdf.ln(5)
+    pdf.ln(2)
 
-    # วาดตาราง PDF
-    pdf.set_font(font_name, '', 10)
+    # วาด Header คาบและเวลา
+    pdf.set_font(font_name, '', 8)
     col_w = 22
-    pdf.cell(20, 10, "Day/Period", border=1, align='C')
-    for i in range(1, 13):
-        pdf.cell(col_w, 10, str(i), border=1, align='C')
-    pdf.ln()
+    pdf.cell(20, 12, "Day / Time", border=1, align='C')
+    for i, t_slot in enumerate(TIME_SLOTS):
+        # แสดง คาบที่ และ ช่วงเวลา
+        x, y = pdf.get_x(), pdf.get_y()
+        pdf.rect(x, y, col_w, 12)
+        pdf.set_xy(x, y + 1)
+        pdf.cell(col_w, 5, f'Period {i+1}', align='C')
+        pdf.set_xy(x, y + 6)
+        pdf.cell(col_w, 5, t_slot, align='C')
+        pdf.set_xy(x + col_w, y)
+    pdf.ln(12)
 
+    # วาดข้อมูลรายวัน
+    pdf.set_font(font_name, '', 10)
     days_map = {'Mon': 'จันทร์', 'Tue': 'อังคาร', 'Wed': 'พุธ', 'Thu': 'พฤหัสบดี', 'Fri': 'ศุกร์'}
     for d_en, d_th in days_map.items():
         pdf.cell(20, 15, d_th if font_name == "THSarabun" else d_en, border=1, align='C')
         for p in range(1, 13):
             if p == 5:
-                pdf.cell(col_w, 15, "-", border=1, align='C')
+                pdf.cell(col_w, 15, "REST", border=1, align='C')
                 continue
             match = df_filtered[(df_filtered['day'] == d_en) & (df_filtered['period'] == p)]
             if not match.empty:
-                # แสดง รหัสวิชา / รหัสครู
                 txt = f"{match.iloc[0]['subject_id']}\n{match.iloc[0]['teacher_id']}"
                 x, y = pdf.get_x(), pdf.get_y()
                 pdf.multi_cell(col_w, 7.5, txt, border=1, align='C')
@@ -51,10 +64,9 @@ def generate_pdf_bytes(df_filtered, title_val):
                 pdf.cell(col_w, 15, "", border=1, align='C')
         pdf.ln()
     
-    # แปลงผลลัพธ์จาก bytearray เป็น bytes เพื่อแก้ปัญหา StreamlitAPIException
     return bytes(pdf.output())
 
-# --- 2. ฟังก์ชันแสดงตารางหน้าเว็บ ---
+# --- 2. ฟังก์ชันแสดงตารางหน้าเว็บพร้อมช่วงเวลา ---
 def draw_web_table(df_filtered):
     days = ['จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์']
     periods = list(range(1, 13))
@@ -65,7 +77,13 @@ def draw_web_table(df_filtered):
         content = f"<b>{row['subject_id']}</b><br>{row['teacher_id']}<br>{row['room_id']}"
         if row['day_th'] in days:
             grid.at[row['day_th'], row['period']] = content
-    grid[5] = "พัก"
+    grid[5] = "🍴 พัก"
+
+    # สร้าง Header HTML ที่มีเวลา
+    header_html = "".join([
+        f"<th><div style='font-size:9px; color:#bdc3c7;'>{t}</div>คาบ {p}</th>" 
+        for p, t in zip(periods, TIME_SLOTS)
+    ])
 
     rows_html = "".join([
         f"<tr><td style='background:#f1f3f6; font-weight:bold;'>{d}</td>" + 
@@ -74,39 +92,35 @@ def draw_web_table(df_filtered):
     ])
 
     html_code = f"""
+    <div style="overflow-x:auto;">
     <style>
-        table {{ width: 100%; border-collapse: collapse; font-family: sans-serif; table-layout: fixed; }}
-        th {{ background: #2c3e50; color: white; padding: 5px; font-size: 11px; border: 1px solid #444; }}
-        td {{ text-align: center; border: 1px solid #ddd; height: 50px; font-size: 10px; }}
+        table {{ width: 100%; border-collapse: collapse; font-family: sans-serif; table-layout: fixed; min-width: 1000px; }}
+        th {{ background: #2c3e50; color: white; padding: 8px; font-size: 11px; border: 1px solid #444; }}
+        td {{ text-align: center; border: 1px solid #ddd; height: 55px; font-size: 10px; line-height: 1.3; }}
+        tr:nth-child(even) {{ background: #f9f9f9; }}
     </style>
     <table>
-        <thead><tr><th>วัน/คาบ</th>{"".join([f'<th>{p}</th>' for p in periods])}</tr></thead>
+        <thead><tr><th style="width:80px;">วัน / เวลา</th>{header_html}</tr></thead>
         <tbody>{rows_html}</tbody>
     </table>
+    </div>
     """
-    components.html(html_code, height=350)
+    components.html(html_code, height=400, scrolling=True)
 
 # --- 3. UI MAIN ---
-st.title("🖥️ AI Timetable Management System")
-
-# เพิ่มปุ่มรัน AI (ถ้าต้องการ)
-if st.sidebar.button("⚙️ รันการจัดตารางใหม่"):
-    # ฟังก์ชัน run_scheduling_ai() ของคุณที่นี่
-    st.sidebar.success("จัดตารางสำเร็จ")
+st.title("📅 AI Timetable (With Time Slots 08.00-20.00)")
 
 if os.path.exists('output.csv'):
     main_df = pd.read_csv('output.csv')
-    tab1, tab2, tab3 = st.tabs(["👥 รายกลุ่ม", "🏫 รายห้อง", "👨‍🏫 รายครู"])
+    tab1, tab2, tab3 = st.tabs(["👥 รายกลุ่มเรียน", "🏫 รายห้องเรียน", "👨‍🏫 รายรหัสครู"])
     
-    # ฟังก์ชันช่วยสร้างปุ่มดาวน์โหลดเพื่อลดโค้ดซ้ำซ้อน
-    def download_section(df_part, unique_id):
+    def display_section(df_part, unique_id):
         draw_web_table(df_part)
-        # สร้าง PDF เฉพาะเมื่อผู้ใช้คลิกปุ่มเพื่อประหยัด RAM
-        if st.button(f"📥 เตรียมไฟล์ PDF ({unique_id})", key=f"btn_{unique_id}"):
-            with st.spinner("กำลังสร้าง PDF..."):
+        if st.button(f"📥 สร้างไฟล์ PDF ({unique_id})", key=f"btn_{unique_id}"):
+            with st.spinner("กำลังเตรียมไฟล์ PDF..."):
                 pdf_data = generate_pdf_bytes(df_part, unique_id)
                 st.download_button(
-                    label="✅ คลิกเพื่อดาวน์โหลด",
+                    label="✅ คลิกเพื่อดาวน์โหลด PDF",
                     data=pdf_data,
                     file_name=f"Timetable_{unique_id}.pdf",
                     mime="application/pdf",
@@ -115,14 +129,12 @@ if os.path.exists('output.csv'):
 
     with tab1:
         sel_g = st.selectbox("เลือกกลุ่มเรียน:", sorted(main_df['group_id'].unique()), key="g_sel")
-        download_section(main_df[main_df['group_id'] == sel_g], sel_g)
-
+        display_section(main_df[main_df['group_id'] == sel_g], sel_g)
     with tab2:
         sel_r = st.selectbox("เลือกห้องเรียน:", sorted(main_df['room_id'].unique()), key="r_sel")
-        download_section(main_df[main_df['room_id'] == sel_r], sel_r)
-
+        display_section(main_df[main_df['room_id'] == sel_r], sel_r)
     with tab3:
         sel_t = st.selectbox("เลือกตามรหัสครู:", sorted(main_df['teacher_id'].unique()), key="t_sel")
-        download_section(main_df[main_df['teacher_id'] == sel_t], sel_t)
+        display_section(main_df[main_df['teacher_id'] == sel_t], sel_t)
 else:
-    st.warning("ไม่พบไฟล์ output.csv กรุณากดรันระบบที่เมนูด้านซ้าย")
+    st.info("กรุณารันการประมวลผลจัดตารางสอนก่อน")
